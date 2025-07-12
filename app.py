@@ -624,7 +624,7 @@ class SEOAnalyzerApp:
         
         def analysis_callback(result):
             completed_analyses[0] += 1
-            # Mark if it's a competitor
+            # Mark if it's a competitor and find main site
             if result['url'] not in self.websites:
                 result['is_competitor'] = True
                 # Find which main site this competitor belongs to
@@ -641,7 +641,11 @@ class SEOAnalyzerApp:
         
         threads = []
         for site in sites:
-            thread = self.analyzer.analyze_website_async(site, analysis_callback)
+            # Determine if this site is a competitor
+            is_competitor = site not in self.websites
+            
+            # Pass the is_competitor flag to skip social media extraction for competitors
+            thread = self.analyzer.analyze_website_async(site, analysis_callback, is_competitor=is_competitor)
             threads.append(thread)
             time.sleep(0.5)  # Small delay between requests
         
@@ -664,11 +668,18 @@ class SEOAnalyzerApp:
         
         completed_outreach = [0]  # Use list for mutable counter
         
-        def outreach_callback(url, message):
+        def outreach_callback(url, message_data):
             completed_outreach[0] += 1
-            self.outreach_messages[url] = message
-            self.results_queue.put(('outreach', (url, message)))
-            print(f"Generated outreach for {url}: {message[:50]}...")
+            self.outreach_messages[url] = message_data
+            self.results_queue.put(('outreach', (url, message_data)))
+            
+            # Extract subject for debug
+            if isinstance(message_data, dict):
+                subject = message_data.get('subject', 'No subject')
+                print(f"Generated outreach for {url}: {subject}")
+            else:
+                print(f"Generated outreach for {url}: {str(message_data)[:50]}...")
+            
             self.update_progress(f"Generated outreach {completed_outreach[0]}/{len(main_sites)}")
         
         threads = []
@@ -771,9 +782,20 @@ class SEOAnalyzerApp:
     
     def handle_outreach_result(self, data):
         """Handle outreach message result"""
-        url, message = data
-        print(f"Handling outreach result for {url}: {message[:50]}...")
-        self.ui.update_outreach_display(self, url, message)
+        url, message_data = data
+        
+        # Extract subject and body for display
+        if isinstance(message_data, dict):
+            subject = message_data.get('subject', '')
+            body = message_data.get('body', '')
+            print(f"Handling outreach result for {url}: Subject: {subject}")
+        else:
+            # Handle old string format
+            subject = "Generated Outreach"
+            body = str(message_data)
+            print(f"Handling outreach result for {url}: {str(message_data)[:50]}...")
+        
+        self.ui.update_outreach_display(self, url, subject, body)
     
     def handle_screenshot_result(self, data):
         """Handle screenshot result"""
@@ -835,7 +857,7 @@ class SEOAnalyzerApp:
             try:
                 self.export_module.export_to_excel(self.results, self.outreach_messages, file_path)
                 messagebox.showinfo("Success", f"Results exported to {file_path}\n\n"
-                                            "Check 'Contacts & AI Outreach' sheet for messages!")
+                                            "Check 'AI Outreach Messages' sheet for subject lines and email bodies!")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export: {str(e)}")
     

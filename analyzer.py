@@ -27,11 +27,11 @@ class SEOAnalyzer:
         self.pagespeed_api_key = None
         self.executor = ThreadPoolExecutor(max_workers=3)
         
-    def analyze_website_async(self, url, callback=None):
+    def analyze_website_async(self, url, callback=None, is_competitor=False):
         """Analyze website asynchronously"""
         def _analyze():
             try:
-                result = self.analyze_website(url)
+                result = self.analyze_website(url, is_competitor=is_competitor)
                 if callback:
                     callback(result)
             except Exception as e:
@@ -40,7 +40,8 @@ class SEOAnalyzer:
                     'error': str(e),
                     'timestamp': format_timestamp(),
                     'seo_score': 0,
-                    'issues': [f"Analysis error: {str(e)}"]
+                    'issues': [f"Analysis error: {str(e)}"],
+                    'is_competitor': is_competitor
                 }
                 if callback:
                     callback(error_result)
@@ -49,7 +50,7 @@ class SEOAnalyzer:
         thread.start()
         return thread
     
-    def analyze_website(self, url):
+    def analyze_website(self, url, is_competitor=False):
         """Enhanced website analysis with more features"""
         result = {
             'url': url,
@@ -62,7 +63,8 @@ class SEOAnalyzer:
             'emails': [],
             'social_media': {},
             'issues': [],
-            'recommendations': []
+            'recommendations': [],
+            'is_competitor': is_competitor
         }
         
         try:
@@ -84,7 +86,7 @@ class SEOAnalyzer:
             self._check_seo_issues(result)
             
             # Technical SEO
-            result['technical_seo'] = self._analyze_technical_seo(soup, url, response)
+            result['technical_seo'] = self._analyze_technical_seo(soup, url, response, result)
             
             # Content quality analysis
             text_content = clean_text_content(soup)
@@ -93,11 +95,17 @@ class SEOAnalyzer:
             # Open Graph tags
             result['open_graph'] = self._extract_open_graph(soup)
             
-            # Find emails
-            result['emails'] = self._extract_emails(response.text)
-            
-            # Find social media links
-            result['social_media'] = self._extract_social_media(response.text)
+            # Only extract emails and social media for main sites (not competitors)
+            if not is_competitor:
+                # Find emails for main sites only
+                result['emails'] = self._extract_emails(response.text)
+                
+                # Find social media links for main sites only
+                result['social_media'] = self._extract_social_media(response.text)
+            else:
+                # Skip email and social media extraction for competitors to speed up analysis
+                result['emails'] = []
+                result['social_media'] = {}
             
             # Check for important files
             self._check_important_files(url, result)
@@ -229,7 +237,7 @@ class SEOAnalyzer:
         if not result.get('open_graph'):
             recommendations.append("Add Open Graph tags for better social sharing")
     
-    def _analyze_technical_seo(self, soup, url, response):
+    def _analyze_technical_seo(self, soup, url, response, result):
         """Analyze technical SEO aspects"""
         viewport = soup.find('meta', attrs={'name': 'viewport'})
         lang = soup.find('html').get('lang') if soup.find('html') else None

@@ -323,9 +323,9 @@ Return ONLY the JSON object, nothing else."""
         """Generate outreach message asynchronously"""
         def _generate():
             try:
-                message = self.generate_outreach_message(main_site_data, competitor_data)
+                message_data = self.generate_outreach_message(main_site_data, competitor_data)
                 if callback:
-                    callback(main_site_data['url'], message)
+                    callback(main_site_data['url'], message_data)
             except Exception as e:
                 print(f"Error generating outreach: {e}")
                 if callback:
@@ -346,6 +346,7 @@ Return ONLY the JSON object, nothing else."""
             main_score = main_site_data.get('seo_score', 0)
             main_issues = main_site_data.get('issues', [])
             main_url = main_site_data.get('url', '')
+            domain = urlparse(main_url).netloc
             
             # Competitor summary
             comp_scores = [c.get('seo_score', 0) for c in competitor_data if not c.get('error')]
@@ -366,9 +367,10 @@ Return ONLY the JSON object, nothing else."""
                         ][:3]
                     })
             
-            prompt = f"""Create a brief, personalized outreach message for {main_url} based on this SEO analysis data.
+            prompt = f"""Create a personalized cold email for {main_url} based on this SEO analysis data.
 
 Website Analysis:
+- Domain: {domain}
 - SEO Score: {main_score}/100
 - Average Competitor Score: {avg_comp_score:.0f}/100
 - Main Issues: {', '.join(main_issues[:5])}
@@ -377,22 +379,48 @@ Website Analysis:
 Competitor Advantages:
 {json.dumps(disadvantages, indent=2)}
 
-Create a SHORT (max 150 words), direct outreach message that:
-1. Opens with their specific competitive disadvantage (if any)
-2. Mentions 1-2 specific issues hurting their ranking
-3. Quantifies potential impact (traffic/revenue increase)
-4. Ends with a clear call to action
+Create a cold email with TWO parts:
 
-Be specific, data-driven, and avoid generic marketing fluff. Write as if you're a helpful expert, not a salesperson.
+1. SUBJECT LINE (curiosity-driven, benefit-focused, max 8 words):
+- Make it intriguing and benefit-focused
+- Create curiosity that makes them want to open
+- Examples: "Found 3 quick wins for [Domain]", "[Domain] missing easy traffic gains", "Your competitors are doing this..."
+- Don't use generic words like "SEO" or "optimization"
 
-IMPORTANT: Return ONLY the message text, no explanations or formatting."""
+2. EMAIL BODY (max 120 words):
+- Start with a specific insight about their website
+- Mention 1-2 specific issues hurting their ranking
+- Quantify potential impact (traffic/revenue increase)
+- End with a soft call to action
+- Write as a helpful expert, not a salesperson
+- Be conversational and direct
+
+IMPORTANT: Return ONLY a JSON object in this exact format:
+{{"subject": "Your compelling subject line here", "body": "Your email body message here"}}
+
+No explanations, no markdown, just the JSON object."""
 
             response = self.generate_with_retry(prompt)
             if not response:
                 return self.generate_fallback_outreach(main_site_data, competitor_data)
-                
-            return response.text.strip()
             
+            # Clean response text
+            response_text = response.text.strip()
+            # Remove any markdown code blocks if present
+            response_text = re.sub(r'```json\s*', '', response_text)
+            response_text = re.sub(r'```\s*', '', response_text)
+            
+            try:
+                message_data = json.loads(response_text)
+                if isinstance(message_data, dict) and 'subject' in message_data and 'body' in message_data:
+                    return message_data
+                else:
+                    # If JSON parsing fails, return fallback
+                    return self.generate_fallback_outreach(main_site_data, competitor_data)
+            except json.JSONDecodeError:
+                print(f"Failed to parse outreach response as JSON: {response_text}")
+                return self.generate_fallback_outreach(main_site_data, competitor_data)
+                
         except Exception as e:
             print(f"Outreach generation error: {str(e)}")
             return self.generate_fallback_outreach(main_site_data, competitor_data)
@@ -406,15 +434,31 @@ IMPORTANT: Return ONLY the message text, no explanations or formatting."""
         comp_scores = [c.get('seo_score', 0) for c in competitor_data if not c.get('error')]
         avg_comp_score = sum(comp_scores) / len(comp_scores) if comp_scores else 0
         
-        if main_score < avg_comp_score:
+        # Generate subject based on issues and performance
+        if main_score < 50:
+            subject = f"Quick fixes to boost {domain.replace('www.', '')} traffic"
+        elif main_issues:
+            subject = f"Found 3 easy wins for {domain.replace('www.', '')}"
+        elif main_score < avg_comp_score:
+            subject = f"{domain.replace('www.', '')} vs your competitors"
+        else:
+            subject = f"Unlock more potential for {domain.replace('www.', '')}"
+        
+        # Generate body
+        if main_score < avg_comp_score and comp_scores:
             opening = f"Your competitors are outranking {domain} with {avg_comp_score - main_score:.0f} points higher SEO scores."
         else:
-            opening = f"While {domain} performs well, there are opportunities to extend your lead."
+            opening = f"I noticed some quick optimization opportunities for {domain}."
         
         issues_text = f"Key issues: {', '.join(main_issues[:2])}" if main_issues else "Several technical improvements needed"
         
-        message = f"""{opening} {issues_text}. 
+        body = f"""{opening} {issues_text}. 
+
 Our analysis shows fixing these could increase organic traffic by 25-40% within 3 months. 
+
 Interested in seeing the full competitive analysis report?"""
         
-        return message
+        return {
+            "subject": subject,
+            "body": body
+        }

@@ -41,6 +41,24 @@ class ExportModule:
             spaceAfter=12
         )
     
+    def _extract_subject_and_body(self, outreach_data):
+        """Extract subject and body from outreach data"""
+        if isinstance(outreach_data, dict):
+            return outreach_data.get('subject', ''), outreach_data.get('body', '')
+        elif isinstance(outreach_data, str):
+            # Handle old format where it was just a string
+            lines = outreach_data.split('\n')
+            if len(lines) > 0 and lines[0].startswith('Subject:'):
+                subject = lines[0].replace('Subject:', '').strip()
+                body = '\n'.join(lines[1:]).strip()
+                return subject, body
+            else:
+                # No clear subject line, create one from content
+                words = outreach_data.split()[:8]  # First 8 words as subject
+                subject = ' '.join(words) + '...' if len(words) == 8 else ' '.join(words)
+                return subject, outreach_data
+        return '', str(outreach_data) if outreach_data else ''
+    
     def export_to_pdf(self, results, outreach_messages, file_path):
         """Generate professional PDF report"""
         doc = SimpleDocTemplate(file_path, pagesize=A4)
@@ -171,8 +189,17 @@ class ExportModule:
                 # Outreach message if available
                 if not result.get('is_competitor') and outreach_messages.get(result['url']):
                     story.append(Spacer(1, 0.2*inch))
-                    story.append(Paragraph("AI-Generated Outreach Message:", self.styles['Heading3']))
-                    story.append(Paragraph(outreach_messages[result['url']], self.styles['Normal']))
+                    story.append(Paragraph("AI-Generated Outreach Email:", self.styles['Heading3']))
+                    
+                    # Extract subject and body
+                    subject, body = self._extract_subject_and_body(outreach_messages[result['url']])
+                    
+                    if subject:
+                        story.append(Paragraph(f"<b>Subject:</b> {subject}", self.styles['Normal']))
+                        story.append(Spacer(1, 0.1*inch))
+                    
+                    story.append(Paragraph(f"<b>Message:</b>", self.styles['Normal']))
+                    story.append(Paragraph(body, self.styles['Normal']))
             else:
                 story.append(Paragraph(f"Error: {result['error']}", self.styles['Normal']))
             
@@ -237,11 +264,6 @@ class ExportModule:
                     'Issues': '; '.join(result.get('issues', [])),
                     'Recommendations': '; '.join(result.get('recommendations', [])),
                     'Emails': '; '.join(result.get('emails', [])),
-                    'Facebook': result.get('social_media', {}).get('facebook', ''),
-                    'Twitter': result.get('social_media', {}).get('twitter', ''),
-                    'Instagram': result.get('social_media', {}).get('instagram', ''),
-                    'LinkedIn': result.get('social_media', {}).get('linkedin', ''),
-                    'YouTube': result.get('social_media', {}).get('youtube', ''),
                     'Error': result.get('error', '')
                 }
                 excel_data.append(row)
@@ -291,11 +313,15 @@ class ExportModule:
                 issues_df = pd.DataFrame(issues_data)
                 issues_df.to_excel(writer, sheet_name='All Issues', index=False)
             
-            # Contacts sheet with AI outreach
+            # Contacts sheet with AI outreach - UPDATED with separate Subject and Body columns
             contacts_data = []
             for result in results:
-                if result.get('emails') or result.get('social_media'):
-                    # Create one row per email
+                if result.get('emails') or outreach_messages.get(result['url']):
+                    # Get outreach data
+                    outreach_data = outreach_messages.get(result['url'], {}) if not result.get('is_competitor') else {}
+                    subject, body = self._extract_subject_and_body(outreach_data)
+                    
+                    # Create one row per email, or one row if no emails but has outreach
                     emails = result.get('emails', [])
                     if emails:
                         for email in emails:
@@ -303,40 +329,38 @@ class ExportModule:
                                 'URL': result['url'],
                                 'Type': 'AI Competitor' if result.get('is_competitor') else 'Main Site',
                                 'Email': email,
-                                'AI Outreach Message': outreach_messages.get(result['url'], '') if not result.get('is_competitor') else ''
+                                'AI Subject Line': subject,
+                                'AI Email Body': body
                             }
-                            # Add social media
-                            for platform in ['facebook', 'twitter', 'instagram', 'linkedin', 'youtube', 'tiktok', 'pinterest']:
-                                contact_row[platform.capitalize()] = result.get('social_media', {}).get(platform, '')
                             contacts_data.append(contact_row)
-                    else:
-                        # If no emails, still add row with social media
+                    elif outreach_data:  # No emails but has outreach message
                         contact_row = {
                             'URL': result['url'],
                             'Type': 'AI Competitor' if result.get('is_competitor') else 'Main Site',
                             'Email': '',
-                            'AI Outreach Message': outreach_messages.get(result['url'], '') if not result.get('is_competitor') else ''
+                            'AI Subject Line': subject,
+                            'AI Email Body': body
                         }
-                        for platform in ['facebook', 'twitter', 'instagram', 'linkedin', 'youtube', 'tiktok', 'pinterest']:
-                            contact_row[platform.capitalize()] = result.get('social_media', {}).get(platform, '')
                         contacts_data.append(contact_row)
             
             if contacts_data:
                 contacts_df = pd.DataFrame(contacts_data)
                 contacts_df.to_excel(writer, sheet_name='Contacts & AI Outreach', index=False)
             
-            # AI Outreach Messages sheet
+            # AI Outreach Messages sheet - UPDATED with separate columns
             if outreach_messages:
                 outreach_data = []
-                for url, message in outreach_messages.items():
+                for url, message_data in outreach_messages.items():
                     # Find the result for this URL
                     site_result = next((r for r in results if r['url'] == url), None)
                     if site_result:
+                        subject, body = self._extract_subject_and_body(message_data)
                         outreach_data.append({
                             'Website': url,
                             'SEO Score': site_result.get('seo_score', 0),
                             'Issues Count': len(site_result.get('issues', [])),
-                            'AI Outreach Message': message,
+                            'Subject Line': subject,
+                            'Email Body': body,
                             'Primary Email': site_result.get('emails', [''])[0] if site_result.get('emails') else ''
                         })
                 

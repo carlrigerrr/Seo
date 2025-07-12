@@ -254,7 +254,7 @@ class UIComponents:
     
     def _update_contacts_display(self, app, result):
         """Update contacts display"""
-        if result.get('emails') or result.get('social_media'):
+        if result.get('emails'):
             app.contacts_text.insert(tk.END, f"{'='*80}\n")
             app.contacts_text.insert(tk.END, f"CONTACTS: {result['url']}\n")
             if result.get('is_competitor'):
@@ -266,21 +266,23 @@ class UIComponents:
                 for email in result['emails']:
                     app.contacts_text.insert(tk.END, f"  • {email}\n")
                 app.contacts_text.insert(tk.END, "\n")
-            
-            if result.get('social_media'):
-                app.contacts_text.insert(tk.END, "🌐 SOCIAL MEDIA:\n")
-                for platform, link in result['social_media'].items():
-                    app.contacts_text.insert(tk.END, f"  • {platform.capitalize()}: {link}\n")
-            
-            app.contacts_text.insert(tk.END, "\n")
     
-    def update_outreach_display(self, app, url, message):
-        """Update outreach message display"""
+    def update_outreach_display(self, app, url, subject, body):
+        """Update outreach message display with separate subject and body"""
         app.outreach_text.insert(tk.END, f"{'='*80}\n")
-        app.outreach_text.insert(tk.END, f"AI OUTREACH MESSAGE FOR: {url}\n")
+        app.outreach_text.insert(tk.END, f"AI OUTREACH EMAIL FOR: {url}\n")
         app.outreach_text.insert(tk.END, f"{'='*80}\n\n")
-        app.outreach_text.insert(tk.END, message)
-        app.outreach_text.insert(tk.END, "\n\n")
+        
+        # Display subject line
+        if subject:
+            app.outreach_text.insert(tk.END, f"📧 SUBJECT LINE:\n")
+            app.outreach_text.insert(tk.END, f"{subject}\n\n")
+        
+        # Display body
+        app.outreach_text.insert(tk.END, f"✉️ EMAIL BODY:\n")
+        app.outreach_text.insert(tk.END, f"{body}\n\n")
+        
+        app.outreach_text.insert(tk.END, f"{'='*80}\n\n")
         app.outreach_text.see(tk.END)
     
     def update_screenshot_gallery(self, app, result):
@@ -365,7 +367,7 @@ class UIComponents:
             ("Your Average Score", f"{main_avg_score:.1f}/100"),
             ("Competitors Average", f"{comp_avg_score:.1f}/100"),
             ("Total Issues Found", sum(len(r.get('issues', [])) for r in app.results)),
-            ("Websites with Errors", sum(1 for r in app.results if 'error' in r))
+            ("Outreach Messages Generated", len(app.outreach_messages))
         ]
         
         for label, value in stats:
@@ -380,6 +382,8 @@ class UIComponents:
                 color = COLORS['success'] if main_avg_score >= 80 else COLORS['warning'] if main_avg_score >= 50 else COLORS['danger']
             elif "Competitors Average" in label:
                 color = COLORS['info']
+            elif "Outreach Messages Generated" in label:
+                color = COLORS['success'] if len(app.outreach_messages) > 0 else COLORS['danger']
             else:
                 color = COLORS['secondary']
             
