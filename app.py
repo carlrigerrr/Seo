@@ -8,6 +8,7 @@ from tkinter import ttk, scrolledtext, filedialog, messagebox
 import threading
 import queue
 import os
+import time
 from urllib.parse import urlparse
 
 from .config import *
@@ -579,6 +580,9 @@ class SEOAnalyzerApp:
             # Analyze all sites
             self.analyze_all_sites(all_sites)
             
+            # Wait for all analyses to complete
+            time.sleep(3)  # Give time for all analyses to finish
+            
             # Generate outreach if enabled
             if self.generate_outreach.get() and self.ai_module.is_initialized:
                 self.generate_all_outreach()
@@ -587,6 +591,7 @@ class SEOAnalyzerApp:
             self.analysis_complete()
             
         except Exception as e:
+            print(f"Analysis error: {str(e)}")
             self.root.after(0, lambda: messagebox.showerror("Analysis Error", str(e)))
         finally:
             self.is_analyzing = False
@@ -595,81 +600,102 @@ class SEOAnalyzerApp:
     def find_all_competitors(self):
         """Find competitors for all websites"""
         competitors = {}
-        threads = []
+        completed_count = [0]  # Use list for mutable counter
         
         def competitor_callback(site, comps):
             competitors[site] = comps
-            self.update_progress(f"Found {len(comps)} competitors for {get_domain_from_url(site)}")
+            completed_count[0] += 1
+            self.update_progress(f"Found {len(comps)} competitors for {get_domain_from_url(site)} ({completed_count[0]}/{len(self.websites)})")
         
+        threads = []
         for website in self.websites:
             thread = self.ai_module.find_competitors_async(website, competitor_callback)
             threads.append(thread)
         
         # Wait for all competitor finding to complete
         for thread in threads:
-            thread.join(timeout=30)  # 30 second timeout per site
+            thread.join(timeout=45)  # Increased timeout
         
         return competitors
     
     def analyze_all_sites(self, sites):
         """Analyze all websites"""
-        threads = []
+        completed_analyses = [0]  # Use list for mutable counter
         
-        for i, site in enumerate(sites):
-            self.current_index = i
-            self.update_progress(f"Analyzing {i+1}/{len(sites)}: {get_domain_from_url(site)}")
-            
+        def analysis_callback(result):
+            completed_analyses[0] += 1
             # Mark if it's a competitor
-            is_competitor = site not in self.websites
-            main_site = None
-            if is_competitor:
+            if result['url'] not in self.websites:
+                result['is_competitor'] = True
                 # Find which main site this competitor belongs to
                 for main, comps in self.competitor_map.items():
-                    if site in comps:
-                        main_site = main
+                    if result['url'] in comps:
+                        result['main_site'] = main
                         break
+            else:
+                result['is_competitor'] = False
+                result['main_site'] = result['url']
             
-            # Analyze website
-            def analysis_callback(result, is_comp=is_competitor, main=main_site):
-                result['is_competitor'] = is_comp
-                result['main_site'] = main or result['url']
-                self.results_queue.put(('analysis', result))
-            
-            thread = self.analyzer.analyze_website_async(site, analysis_callback)
-            threads.append((site, thread))
-            
-            # Add small delay to avoid overwhelming servers
-            time.sleep(0.5)
+            self.results_queue.put(('analysis', result))
+            self.update_progress(f"Analyzed {completed_analyses[0]}/{len(sites)}: {get_domain_from_url(result['url'])}")
         
-        # Wait for analyses to complete
-        for site, thread in threads:
-            thread.join(timeout=60)  # 60 second timeout per site
+        threads = []
+        for site in sites:
+            thread = self.analyzer.analyze_website_async(site, analysis_callback)
+            threads.append(thread)
+            time.sleep(0.5)  # Small delay between requests
+        
+        # Wait for all analyses to complete
+        for thread in threads:
+            thread.join(timeout=90)  # Increased timeout for website analysis
     
     def generate_all_outreach(self):
         """Generate outreach messages for all main sites"""
         self.update_progress("🤖 Generating AI outreach messages...")
         
+        # Get main sites (not competitors)
         main_sites = [r for r in self.results if not r.get('is_competitor', False)]
-        threads = []
         
+        print(f"Generating outreach for {len(main_sites)} main sites")
+        
+        if not main_sites:
+            print("No main sites found for outreach generation")
+            return
+        
+        completed_outreach = [0]  # Use list for mutable counter
+        
+        def outreach_callback(url, message):
+            completed_outreach[0] += 1
+            self.outreach_messages[url] = message
+            self.results_queue.put(('outreach', (url, message)))
+            print(f"Generated outreach for {url}: {message[:50]}...")
+            self.update_progress(f"Generated outreach {completed_outreach[0]}/{len(main_sites)}")
+        
+        threads = []
         for main_site in main_sites:
-            # Find competitors for this site
-            competitors = [r for r in self.results if r.get('is_competitor', False) 
-                          and r.get('main_site') == main_site['url']]
+            # Find competitors for this main site
+            main_url = main_site['url']
+            competitors = [r for r in self.results 
+                          if r.get('is_competitor', False) and r.get('main_site') == main_url]
             
-            if competitors:
-                def outreach_callback(url, message):
-                    self.outreach_messages[url] = message
-                    self.results_queue.put(('outreach', (url, message)))
-                
+            print(f"Main site: {main_url}, Competitors: {[c['url'] for c in competitors]}")
+            
+            # Only generate outreach if we have competitor data or the main site has issues
+            if competitors or main_site.get('issues'):
                 thread = self.ai_module.generate_outreach_message_async(
                     main_site, competitors, outreach_callback
                 )
                 threads.append(thread)
+            else:
+                # Generate fallback outreach
+                fallback_message = self.ai_module.generate_fallback_outreach(main_site, [])
+                outreach_callback(main_url, fallback_message)
         
         # Wait for all outreach generation
         for thread in threads:
-            thread.join(timeout=30)
+            thread.join(timeout=60)  # Increased timeout
+        
+        print(f"Outreach generation complete. Generated {len(self.outreach_messages)} messages")
     
     def analysis_complete(self):
         """Handle analysis completion"""
@@ -678,7 +704,13 @@ class SEOAnalyzerApp:
             self.screenshot_module.cleanup()
         
         # Update UI
-        self.update_progress(f"✅ Analysis complete! Analyzed {len(self.results)} websites.")
+        total_sites = len(self.results)
+        main_sites = len([r for r in self.results if not r.get('is_competitor', False)])
+        competitors = len([r for r in self.results if r.get('is_competitor', False)])
+        outreach_count = len(self.outreach_messages)
+        
+        summary_msg = f"✅ Analysis complete! {total_sites} sites analyzed ({main_sites} main, {competitors} competitors). {outreach_count} outreach messages generated."
+        self.update_progress(summary_msg)
         
         # Show summary
         self.root.after(0, self.show_analysis_summary)
@@ -740,6 +772,7 @@ class SEOAnalyzerApp:
     def handle_outreach_result(self, data):
         """Handle outreach message result"""
         url, message = data
+        print(f"Handling outreach result for {url}: {message[:50]}...")
         self.ui.update_outreach_display(self, url, message)
     
     def handle_screenshot_result(self, data):
