@@ -84,7 +84,7 @@ class AIModule:
             genai.configure(api_key=api_key)
             
             # Try to create model and generate simple content
-            model = genai.GenerativeModel('gemini-2.0-flash-latest')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content("Say 'Hello'")
             
             # If we get here, key is valid
@@ -119,7 +119,7 @@ class AIModule:
         for key in self.api_keys:
             try:
                 genai.configure(api_key=key)
-                model = genai.GenerativeModel('gemini-2.0-flash-latest')
+                model = genai.GenerativeModel('gemini-2.0-flash')
                 # Test the model
                 test_response = model.generate_content("Test")
                 self.gemini_models.append(model)
